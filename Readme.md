@@ -1,0 +1,287 @@
+# LysTriFuse
+
+**LysTriFuse: ESM2 and K-mer Decision-Level Fusion with Hybrid Resampling and Triple-Classifier Ensemble for Multiple Lysine Modification Site Prediction**
+
+---
+
+## Overview
+
+LysTriFuse is a computational tool for the simultaneous prediction of four types of lysine post-translational modification (PTM) sites in human proteins: **Acetylation (A)**, **Crotonylation (C)**, **Methylation (M)**, and **Succinylation (S)**.
+
+The key challenges addressed by LysTriFuse are:
+
+- **Extreme class imbalance**: the training set has a max-to-min class ratio exceeding 100:1
+- **Multi-label complexity**: co-occurrence and crosstalk between different modification types
+- **Limited feature expressiveness** of traditional hand-crafted features
+
+LysTriFuse tackles these challenges through a three-stage pipeline: dual-view feature extraction, a four-stage hybrid resampling strategy, and a weighted heterogeneous classifier ensemble with decision-level fusion.
+
+---
+
+## Framework Overview
+
+```
+Input: 49-aa peptide sequence centered on Lysine (K)
+         │
+         ├─── ESM2 Feature Extraction (100-dim)
+         │         └── Linear projection + mean pooling
+         │
+         └─── K-mer Feature Extraction (20-dim, k=1)
+                   └── Amino acid count vector
+         │
+         ▼
+Hybrid Resampling (applied independently to each feature stream)
+   Step 1: KPCA Oversampling       (minority class augmentation)
+   Step 2: ENN Undersampling × 5   (boundary denoising)
+   Step 3: OSS Undersampling × 5   (boundary refinement)
+   Step 4: CC Undersampling × 1    (cluster-centroid compression)
+         │
+         ▼
+Triple-Classifier Ensemble (each trained on both feature streams independently)
+   ┌─────────────┐   ┌───────────┐   ┌───────────┐
+   │  LinearSVC  │   │   SAPP    │   │   FNet    │
+   │  w = 0.6    │   │  w = 0.1  │   │  w = 0.3  │
+   └─────────────┘   └───────────┘   └───────────┘
+         │                 │               │
+    avg(ESM2, Kmer)   avg(ESM2, Kmer)  avg(ESM2, Kmer)
+         │
+         ▼
+   Weighted Fusion → Binary prediction (threshold τ = 0.5)
+         │
+         ▼
+Output: 4-bit multi-label vector [A, C, M, S]
+```
+
+---
+
+## Dataset
+
+Peptide sequences are derived from the [CPLM 4.0 database](https://cplm.biocuckoo.cn). Lysine-centered 49-residue windows were extracted, deduplicated (100% identity), and split 70/30 into training and test sets. CD-HIT (threshold 0.4) was applied to remove homologous sequences across splits.
+
+| Class | Modification | One-hot | Train | Test |
+|-------|-------------|---------|-------|------|
+| 0 | A (Acetylation) | [1,0,0,0] | 9,279 | 4,062 |
+| 1 | C (Crotonylation) | [0,1,0,0] | 710 | 304 |
+| 2 | M (Methylation) | [0,0,1,0] | 600 | 257 |
+| 3 | S (Succinylation) | [0,0,0,1] | 454 | 194 |
+| 4 | A,C | [1,1,0,0] | 561 | 240 |
+| 5 | A,M | [1,0,1,0] | 252 | 107 |
+| 6 | A,S | [1,0,0,1] | 360 | 154 |
+| 7 | C,M | [0,1,1,0] | 88 | 42 |
+| 8 | A,C,M | [1,1,1,0] | 153 | 73 |
+| 9 | A,C,S | [1,1,0,1] | 454 | 191 |
+| 10 | A,C,M,S | [1,1,1,1] | 73 | 36 |
+| **Total** | | | **12,984** | **5,660** |
+
+---
+
+## Methods
+
+### 1. Feature Extraction
+
+**ESM2 (100-dim)**
+- Model: `facebook/esm2_t6_8M_UR50D`
+- A trainable linear projection layer reduces each position's 320-dim hidden state to 100 dims
+- Mean pooling over all positions yields a fixed-size global sequence embedding
+
+**K-mer (20-dim, k=1)**
+- Raw amino acid count vector for all 20 standard amino acids (ACDEFGHIKLMNPQRSTVWY)
+- Biologically interpretable; directly reflects local amino acid composition preferences
+
+**Fusion strategy**: prediction-level fusion (not feature concatenation). Each classifier is trained independently on ESM2 features and K-mer features; the two prediction probability vectors are averaged as the classifier's combined output. This avoids the curse of dimensionality and preserves each feature stream's discriminative structure.
+
+### 2. Hybrid Resampling
+
+To address extreme imbalance (100:1 ratio), a four-stage strategy is applied sequentially:
+
+| Step | Method | Key Parameters | Rounds |
+|------|--------|---------------|--------|
+| 1 | KPCA Oversampling | kernel=RBF, γ=0.1, n_components=3, k=5 | 1 |
+| 2 | ENN Undersampling | k=3 | 5 |
+| 3 | OSS Undersampling | n_neighbors=3 | 5 |
+| 4 | CC Undersampling | MiniBatchKMeans, n_init=10, batch_size=2048 | 1 |
+
+Target: **1,180 samples per class**.
+
+### 3. Classifier Ensemble
+
+Three heterogeneous classifiers are combined via weighted averaging:
+
+- **LinearSVC** (w=0.6): strong multi-label coverage in high-dimensional spaces; decision scores transformed to probabilities via sigmoid
+- **SAPP** (w=0.1): structure-aware attention mechanism; cross-attention between sequence and structural features; AdamW optimizer, BCE loss
+- **FNet** (w=0.3): replaces self-attention with 2D FFT for frequency-domain feature mixing; lightweight and complementary
+
+Final prediction: weighted average of the three classifiers' outputs, binarized at threshold τ=0.5.
+
+---
+
+## Results
+
+### 5-Fold Cross-Validation (Training Set)
+
+| Metric | Value |
+|--------|-------|
+| Coverage | 0.8603 |
+| MR1 | 0.9038 |
+| MR2 | 0.8864 |
+| **MR3** | **0.8650** |
+| Absolute True | 0.6601 |
+| Aiming | 0.8220 |
+
+### Independent Test Set
+
+| Metric | Value |
+|--------|-------|
+| Coverage | **0.9065** |
+| MR1 | **0.9332** |
+| MR2 | **0.7243** |
+| **MR3** | **0.5927** |
+| Absolute True | 0.1208 |
+| Aiming | 0.4803 |
+
+### Comparison with State-of-the-Art (Independent Test Set)
+
+| Method | Aiming | Coverage | Accuracy | Abs.True | MR3 |
+|--------|--------|----------|----------|----------|-----|
+| predML-Site | 55.03 | 45.48 | 49.67 | 43.70 | 0.29 |
+| iMul-kSite | 52.64 | 51.32 | 44.02 | 38.58 | 0.88 |
+| PreMLS | 81.53 | 83.01 | 77.54 | 69.00 | 25.44 |
+| MlyPredCSED | **91.51** | 87.70 | **84.90** | **78.31** | 16.80 |
+| **LysTriFuse (Ours)** | 48.03 | **90.65** | 46.70 | 12.08 | **59.27** |
+
+> LysTriFuse achieves a **+42.47 percentage point** improvement in MR3 over MlyPredCSED (59.27% vs. 16.80%), demonstrating a strong advantage in recognizing complex multi-modification co-occurrence classes (3+ simultaneous modifications).
+
+---
+
+## Evaluation Metrics
+
+| Metric | Description |
+|--------|-------------|
+| **Aiming** | Precision averaged over samples |
+| **Coverage** | Recall averaged over samples |
+| **Accuracy** | Jaccard similarity averaged over samples |
+| **Absolute True** | Fraction of samples with all labels correctly predicted |
+| **Absolute False** | Fraction of incorrectly predicted label pairs (lower is better) |
+| **MRj** | Match Rate: fraction of samples with ≥j true modifications where ≥j are correctly predicted |
+
+MR3 is the primary metric: it measures the model's ability to identify samples with **three or more co-occurring modifications**.
+
+---
+
+## Code Structure
+
+```
+LysTriFuse/
+│
+├── esm2_feature_extraction.py          # ESM2 deep semantic feature extraction
+├── kmer_feature_extraction.py          # K-mer amino acid count feature extraction
+│
+├── KPCA_OVER_sample.py                 # Step 1: KPCA oversampling
+├── ENN_UNDER_sample.py                 # Step 2: ENN undersampling
+├── OSS_UNDER_sample.py                 # Step 3: OSS undersampling
+├── CC_UNDER_sample.py                  # Step 4: Cluster Centroids undersampling
+│
+├── classify_SVM_SAPP_FNet_5-fold_cross-validation_decision_fusion.py
+│                                       # 5-fold CV training & evaluation
+└── classify_SVM_SAPP_FNet_independent_test_decision_fusion.py
+                                        # Independent test set evaluation
+```
+
+---
+
+## Environment
+
+```
+Python 3.x
+PyTorch 2.7.1+cu128
+scikit-learn 1.3.2
+transformers
+imbalanced-learn
+numpy
+chardet
+```
+
+Hardware used during development: NVIDIA GeForce RTX 4060 Laptop GPU (8 GB VRAM), Intel Core i7-14700HX, 47.7 GB RAM.
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/[your_github_link]/LysTriFuse.git
+cd LysTriFuse
+pip install -r requirements.txt
+```
+
+---
+
+## Usage
+
+### Step 1: Feature Extraction
+
+```bash
+# ESM2 features
+python esm2_feature_extraction.py
+
+# K-mer features
+python kmer_feature_extraction.py
+```
+
+### Step 2: Hybrid Resampling (run sequentially)
+
+```bash
+python KPCA_OVER_sample.py
+python ENN_UNDER_sample.py
+python OSS_UNDER_sample.py
+python CC_UNDER_sample.py
+```
+
+### Step 3: Training & Evaluation
+
+```bash
+# 5-fold cross-validation
+python classify_SVM_SAPP_FNet_5-fold_cross-validation_decision_fusion.py
+
+# Independent test set
+python classify_SVM_SAPP_FNet_independent_test_decision_fusion.py
+```
+
+---
+
+## Data Format
+
+Input files should be FASTA-format `.txt` files placed in `Train dataset/` and `Test dataset/` directories. Each sequence should be a 49-residue lysine-centered peptide window.
+
+Feature files and resampled datasets are saved as `.npz` files containing:
+- `embeddings`: feature matrix of shape `(n_samples, n_features)`
+- `names`: sample identifier strings
+
+---
+
+## Explainability
+
+LysTriFuse integrates **SHAP** and **LIME** for model interpretability:
+
+- **SHAP LinearExplainer** on the SVM component (exact Shapley values for all 5,660 test samples)
+- **KernelSHAP** on SAPP and FNet (model-agnostic approximation)
+- **LIME** for local single-sample explanations on the SVM component
+
+Key findings from the K-mer SHAP analysis align with known biochemistry:
+- **Acetylation**: dominated by Glutamate (E) — consistent with HAT enzyme recognition of KxE/KxxE acidic motifs
+- **Crotonylation**: dominated by Proline (P) — reflects structural flexibility requirements at transcription start sites
+- **Methylation**: Leucine (L) prominent — hydrophobic pocket preference of PKMTs
+- **Succinylation**: Serine (S) and Glutamate (E) co-dominant — polar/acidic environment preference of SIRT5
+
+---
+
+## License
+
+This project is released under the [MIT License](LICENSE).
+
+---
+
+## Contact
+
+- Yun Zuo: zuoyun@jiangnan.edu.cn
+- JiaYi Ji: 1191230307@stu.jiangnan.edu.cn
+- School of Artificial Intelligence and Computer Science, Jiangnan University, Wuxi 214000, China
