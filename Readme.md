@@ -115,44 +115,6 @@ Final prediction: weighted average of the three classifiers' outputs, binarized 
 
 ---
 
-## Results
-
-### 5-Fold Cross-Validation (Training Set)
-
-| Metric | Value |
-|--------|-------|
-| Coverage | 0.8603 |
-| MR1 | 0.9038 |
-| MR2 | 0.8864 |
-| **MR3** | **0.8650** |
-| Absolute True | 0.6601 |
-| Aiming | 0.8220 |
-
-### Independent Test Set
-
-| Metric | Value |
-|--------|-------|
-| Coverage | **0.9065** |
-| MR1 | **0.9332** |
-| MR2 | **0.7243** |
-| **MR3** | **0.5927** |
-| Absolute True | 0.1208 |
-| Aiming | 0.4803 |
-
-### Comparison with State-of-the-Art (Independent Test Set)
-
-| Method | Aiming | Coverage | Accuracy | Abs.True | MR3 |
-|--------|--------|----------|----------|----------|-----|
-| predML-Site | 55.03 | 45.48 | 49.67 | 43.70 | 0.29 |
-| iMul-kSite | 52.64 | 51.32 | 44.02 | 38.58 | 0.88 |
-| PreMLS | 81.53 | 83.01 | 77.54 | 69.00 | 25.44 |
-| MlyPredCSED | **91.51** | 87.70 | **84.90** | **78.31** | 16.80 |
-| **LysTriFuse (Ours)** | 48.03 | **90.65** | 46.70 | 12.08 | **59.27** |
-
-> LysTriFuse achieves a **+42.47 percentage point** improvement in MR3 over MlyPredCSED (59.27% vs. 16.80%), demonstrating a strong advantage in recognizing complex multi-modification co-occurrence classes (3+ simultaneous modifications).
-
----
-
 ## Evaluation Metrics
 
 | Metric | Description |
@@ -172,19 +134,44 @@ MR3 is the primary metric: it measures the model's ability to identify samples w
 
 ```
 LysTriFuse/
-│
-├── esm2_feature_extraction.py          # ESM2 deep semantic feature extraction
-├── kmer_feature_extraction.py          # K-mer amino acid count feature extraction
-│
-├── KPCA_OVER_sample.py                 # Step 1: KPCA oversampling
-├── ENN_UNDER_sample.py                 # Step 2: ENN undersampling
-├── OSS_UNDER_sample.py                 # Step 3: OSS undersampling
-├── CC_UNDER_sample.py                  # Step 4: Cluster Centroids undersampling
-│
-├── classify_SVM_SAPP_FNet_5-fold_cross-validation_decision_fusion.py
-│                                       # 5-fold CV training & evaluation
-└── classify_SVM_SAPP_FNet_independent_test_decision_fusion.py
-                                        # Independent test set evaluation
+├── Readme.md
+├── Data/
+│   ├── Train dataset/
+│   │   ├── (1)Train9279.txt                    # A only
+│   │   ├── (2)Train710.txt                     # C only
+│   │   ├── (3)Train600.txt                     # M only
+│   │   ├── (4)Train454.txt                     # S only
+│   │   ├── (5)Train561.txt                     # A,C
+│   │   ├── (6)Train251.txt                     # A,M
+│   │   ├── (7)Train360.txt                     # A,S
+│   │   ├── (8)Train88.txt                      # C,M
+│   │   ├── (9)Train153.txt                     # A,C,M
+│   │   ├── (10)Train454.txt                    # A,C,S
+│   │   └── (11)Train73.txt                     # A,C,M,S
+│   └── Test dataset/
+│       ├── (1)Test4062.txt                     # A only
+│       ├── (2)Test304.txt                      # C only
+│       ├── (3)Test257.txt                      # M only
+│       ├── (4)Test194.txt                      # S only
+│       ├── (5)Test240.txt                      # A,C
+│       ├── (6)Test107.txt                      # A,M
+│       ├── (7)Test154.txt                      # A,S
+│       ├── (8)Test42.txt                       # C,M
+│       ├── (9)Test72.txt                       # A,C,M
+│       ├── (10)Test194.txt                     # A,C,S
+│       └── (11)Test36.txt                      # A,C,M,S
+└── Code/
+    ├── feature_extraction/
+    │   ├── esm2_feature_extraction.py          # ESM2 deep semantic feature extraction
+    │   └── kmer_feature_extraction.py          # K-mer amino acid count feature extraction
+    ├── resampling/
+    │   ├── KPCA_OVER_sample.py                 # Step 1: KPCA oversampling
+    │   ├── ENN_UNDER_sample.py                 # Step 2: ENN undersampling
+    │   ├── OSS_UNDER_sample.py                 # Step 3: OSS undersampling
+    │   └── CC_UNDER_sample.py                  # Step 4: Cluster Centroids undersampling
+    └── classification/
+        ├── classify_SVM_SAPP_FNet_5-fold_cross-validation_decision_fusion.py
+        └── classify_SVM_SAPP_FNet_independent_test_decision_fusion.py
 ```
 
 ---
@@ -208,7 +195,7 @@ Hardware used during development: NVIDIA GeForce RTX 4060 Laptop GPU (8 GB VRAM)
 ## Installation
 
 ```bash
-git clone https://github.com/[your_github_link]/LysTriFuse.git
+git clone https://github.com/bmz24h2/LysTriFuse.git
 cd LysTriFuse
 pip install -r requirements.txt
 ```
@@ -217,60 +204,52 @@ pip install -r requirements.txt
 
 ## Usage
 
+> **Note**: Before running any script, open it and update the paths to match your own environment.
+
 ### Step 1: Feature Extraction
 
 ```bash
-# ESM2 features
-python esm2_feature_extraction.py
-
-# K-mer features
-python kmer_feature_extraction.py
+python Code/feature_extraction/esm2_feature_extraction.py
+python Code/feature_extraction/kmer_feature_extraction.py
 ```
 
-### Step 2: Hybrid Resampling (run sequentially)
+### Step 2: Hybrid Resampling
+
+Run the four scripts in the following order. **ENN and OSS are each run once per execution — the 5 rounds described in the paper are achieved by manually repeating each script 5 times in sequence**, passing the output of one run as the input of the next.
 
 ```bash
-python KPCA_OVER_sample.py
-python ENN_UNDER_sample.py
-python OSS_UNDER_sample.py
-python CC_UNDER_sample.py
+# Step 1: KPCA oversampling (run once)
+python Code/resampling/KPCA_OVER_sample.py
+
+# Step 2: ENN undersampling (run 5 times manually, chaining output → input each time)
+python Code/resampling/ENN_UNDER_sample.py  # repeat 5×
+
+# Step 3: OSS undersampling (run 5 times manually, chaining output → input each time)
+python Code/resampling/OSS_UNDER_sample.py  # repeat 5×
+
+# Step 4: CC undersampling (run once)
+python Code/resampling/CC_UNDER_sample.py
 ```
 
 ### Step 3: Training & Evaluation
 
 ```bash
 # 5-fold cross-validation
-python classify_SVM_SAPP_FNet_5-fold_cross-validation_decision_fusion.py
+python Code/classification/classify_SVM_SAPP_FNet_5-fold_cross-validation_decision_fusion.py
 
 # Independent test set
-python classify_SVM_SAPP_FNet_independent_test_decision_fusion.py
+python Code/classification/classify_SVM_SAPP_FNet_independent_test_decision_fusion.py
 ```
 
 ---
 
 ## Data Format
 
-Input files should be FASTA-format `.txt` files placed in `Train dataset/` and `Test dataset/` directories. Each sequence should be a 49-residue lysine-centered peptide window.
+Input files should be FASTA-format `.txt` files placed in `Train dataset/` and `Test dataset/` directories under `Data/`. Each sequence should be a 49-residue lysine-centered peptide window.
 
 Feature files and resampled datasets are saved as `.npz` files containing:
 - `embeddings`: feature matrix of shape `(n_samples, n_features)`
 - `names`: sample identifier strings
-
----
-
-## Explainability
-
-LysTriFuse integrates **SHAP** and **LIME** for model interpretability:
-
-- **SHAP LinearExplainer** on the SVM component (exact Shapley values for all 5,660 test samples)
-- **KernelSHAP** on SAPP and FNet (model-agnostic approximation)
-- **LIME** for local single-sample explanations on the SVM component
-
-Key findings from the K-mer SHAP analysis align with known biochemistry:
-- **Acetylation**: dominated by Glutamate (E) — consistent with HAT enzyme recognition of KxE/KxxE acidic motifs
-- **Crotonylation**: dominated by Proline (P) — reflects structural flexibility requirements at transcription start sites
-- **Methylation**: Leucine (L) prominent — hydrophobic pocket preference of PKMTs
-- **Succinylation**: Serine (S) and Glutamate (E) co-dominant — polar/acidic environment preference of SIRT5
 
 ---
 
